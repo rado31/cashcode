@@ -1,14 +1,12 @@
-use crate::constants::bill_types;
+use crate::{constants::bill_types, tools::format_to_hex};
 
 use super::{disable, enable, init, poll, reset, return_bill, set_security};
 
 pub fn start() {
-    let price: u32 = 2;
-    let mut total: u32 = 0;
+    let price: f32 = 50.0;
+    let mut total: f32 = 0.0;
 
     let mut port = init();
-
-    disable(&mut port);
 
     reset(&mut port);
     enable(&mut port);
@@ -38,7 +36,14 @@ pub fn start() {
                     break;
                 }
             }
-            _ => (),
+            // 1C - rejection
+            28 => match response[1] {
+                // verification
+                102 => println!("VERIFICATION ERROR"),
+                // others
+                _ => println!("{:?}", format_to_hex(&response)),
+            },
+            _ => println!("OTHER RES: {:?}", format_to_hex(&response)),
         }
     }
 }
