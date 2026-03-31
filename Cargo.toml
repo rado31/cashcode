@@ -1,0 +1,25 @@
+[package]
+name = "cashcode"
+version = "0.1.0"
+edition = "2024"
+description = "CashCode bill validator driver using the CCNET protocol"
+license = "MIT"
+repository = "https://github.com/rado31/cashcode"
+readme = "README.md"
+documentation = "https://docs.rs/cashcode"
+keywords = ["cashcode", "ccnet", "bill-validator", "serial", "hardware"]
+categories = ["hardware-support", "embedded"]
+
+[lib]
+name = "cashcode"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cashcode"
+path = "src/main.rs"
+
+[dependencies]
+serialport = "4"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
