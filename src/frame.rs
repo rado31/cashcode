@@ -97,19 +97,19 @@ impl Frame {
     }
 }
 
-/// CRC-CCITT (polynomial `0x1021`, initial value `0xFFFF`).
+/// CRC-KERMIT (polynomial `0x1021`, initial value `0x0000`, reflected).
 ///
 /// Covers all bytes from SYNC through the last DATA byte (not including
 /// the two CRC bytes themselves). The result is transmitted LSB-first.
 pub fn crc16(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
+    let mut crc: u16 = 0x0000;
     for &byte in data {
-        crc ^= (byte as u16) << 8;
+        crc ^= byte as u16;
         for _ in 0..8 {
-            if crc & 0x8000 != 0 {
-                crc = (crc << 1) ^ 0x1021;
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0x8408;
             } else {
-                crc <<= 1;
+                crc >>= 1;
             }
         }
     }
@@ -160,11 +160,9 @@ mod tests {
 
     #[test]
     fn crc16_known_value() {
-        // CRC-CCITT over empty slice with init 0xFFFF should give 0xFFFF
-        assert_eq!(crc16(&[]), 0xFFFF);
-        // Verify the CRC doesn't change for known POLL command frame bytes
-        let data = [0x02u8, 0x03, 0x06, 0x33];
-        let crc = crc16(&data);
-        assert_ne!(crc, 0); // basic sanity
+        // CRC-KERMIT over empty slice with init 0x0000 should give 0x0000
+        assert_eq!(crc16(&[]), 0x0000);
+        // IDENTIFICATION frame [02 03 06 37] → CRC = 0xC7FE (transmitted FE C7)
+        assert_eq!(crc16(&[0x02, 0x03, 0x06, 0x37]), 0xC7FE);
     }
 }
