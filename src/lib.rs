@@ -11,20 +11,24 @@
 //!
 //! fn main() -> cashcode::Result<()> {
 //!     let mut dev = CashcodeDevice::open("/dev/ttyUSB0", None, None)?;
+//!
 //!     dev.initialize()?;
 //!
 //!     loop {
 //!         match dev.poll()? {
 //!             DeviceState::EscrowPosition { bill_type } => {
 //!                 let table = dev.bill_table()?;
+//!
 //!                 if let Some(entry) = table.get(bill_type) {
 //!                     println!("Accepted: {entry}");
 //!                 }
+//!
 //!                 dev.stack()?;
 //!             }
 //!             DeviceState::BillStacked { .. } => println!("Bill stacked."),
 //!             _ => {}
 //!         }
+//!
 //!         std::thread::sleep(Duration::from_millis(200));
 //!     }
 //! }
@@ -42,8 +46,9 @@
 //! ```
 //!
 //! - **LNG** is the total frame length (all 6+ bytes included).
-//! - **CRC** is CRC-CCITT (poly `0x1021`, init `0xFFFF`), transmitted
-//!   LSB-first, covering every byte from `SYNC` through the last `DATA` byte.
+//! - **CRC** is CRC-KERMIT (reflected poly `0x8408`, init `0x0000`),
+//!   transmitted LSB-first, covering every byte from `SYNC` through the last
+//!   `DATA` byte.
 
 pub mod bill_table;
 pub mod command;

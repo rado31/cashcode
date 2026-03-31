@@ -43,6 +43,7 @@ pub struct Identification {
 /// use std::time::Duration;
 ///
 /// let mut dev = CashcodeDevice::open("/dev/ttyUSB0", None, None)?;
+///
 /// dev.initialize()?;
 ///
 /// loop {
@@ -56,8 +57,10 @@ pub struct Identification {
 ///         }
 ///         _ => {}
 ///     }
+///
 ///     std::thread::sleep(Duration::from_millis(200));
 /// }
+///
 /// # Ok::<(), cashcode::Error>(())
 /// ```
 pub struct CashcodeDevice {
@@ -91,6 +94,7 @@ impl CashcodeDevice {
     fn send(&mut self, command: Command) -> Result<Frame> {
         let frame = Frame::new(command.to_data());
         let bytes = frame.encode();
+
         debug!("TX → {:02X?}", bytes);
 
         self.port.write_all(&bytes)?;
@@ -110,11 +114,13 @@ impl CashcodeDevice {
         // Scan for the SYNC byte, discarding garbage.
         let sync = loop {
             let mut buf = [0u8; 1];
+
             match self.port.read_exact(&mut buf) {
                 Ok(()) => {
                     if buf[0] == SYNC {
                         break buf[0];
                     }
+
                     warn!("discarding non-SYNC byte: {:#04x}", buf[0]);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
@@ -126,7 +132,9 @@ impl CashcodeDevice {
 
         // Read ADR + LNG (2 bytes).
         let mut header = [0u8; 2];
+
         self.port.read_exact(&mut header)?;
+
         let addr = header[0];
         let lng = header[1] as usize;
 
@@ -137,10 +145,12 @@ impl CashcodeDevice {
         // Read the remainder: DATA + CRC (lng - 3 bytes already read: SYNC+ADR+LNG).
         let remaining = lng - 3;
         let mut rest = vec![0u8; remaining];
+
         self.port.read_exact(&mut rest)?;
 
         // Reconstruct the complete raw frame for Frame::decode (which re-checks CRC).
         let mut raw = Vec::with_capacity(lng);
+
         raw.push(sync);
         raw.push(addr);
         raw.push(lng as u8);
@@ -156,6 +166,7 @@ impl CashcodeDevice {
     /// Send a command and verify the device responded with ACK (0x00).
     fn ack_command(&mut self, command: Command) -> Result<()> {
         let response = self.send(command)?;
+
         match response.data.first().copied() {
             Some(ACK) => Ok(()),
             Some(0xFF) => Err(Error::Nak),
@@ -175,8 +186,21 @@ impl CashcodeDevice {
     }
 
     /// Send a `POLL` command and return the current [`DeviceState`].
+    ///
+    /// After reading the device's response an ACK frame is sent back so the
+    /// device advances its internal state machine.  Without this ACK the
+    /// device stays frozen in the current state indefinitely.
     pub fn poll(&mut self) -> Result<DeviceState> {
         let response = self.send(Command::Poll)?;
+
+        // Send ACK back to the device — required by CCNET after every POLL.
+        let ack = Frame::new(vec![ACK]).encode();
+
+        debug!("TX ACK → {:02X?}", ack);
+
+        let _ = self.port.write_all(&ack);
+        let _ = self.port.flush();
+
         DeviceState::from_poll_data(&response.data)
     }
 
@@ -195,9 +219,16 @@ impl CashcodeDevice {
     }
 
     /// Set the validation security level.
+    ///
+    /// The device requires ~2 seconds to apply the new settings.
     pub fn set_security(&mut self, level: SecurityLevel) -> Result<()> {
         debug!("setting security level: {:?}", level);
-        self.ack_command(Command::SetSecurity(level))
+
+        self.ack_command(Command::SetSecurity(level))?;
+
+        std::thread::sleep(Duration::from_secs(2));
+
+        Ok(())
     }
 
     /// Move the escrowed bill into the cashbox stacker.
@@ -231,7 +262,9 @@ impl CashcodeDevice {
     pub fn get_bill_table(&mut self) -> Result<BillTable> {
         let response = self.send(Command::GetBillTable)?;
         let table = BillTable::from_response_data(&response.data)?;
+
         self.bill_table = Some(table.clone());
+
         Ok(table)
     }
 
@@ -241,6 +274,7 @@ impl CashcodeDevice {
         if self.bill_table.is_none() {
             self.get_bill_table()?;
         }
+
         Ok(self.bill_table.as_ref().unwrap())
     }
 
@@ -248,9 +282,11 @@ impl CashcodeDevice {
     pub fn identify(&mut self) -> Result<Identification> {
         let response = self.send(Command::Identification)?;
         let data = &response.data;
+
         if data.len() < 26 {
             return Err(Error::InvalidFrame("IDENTIFICATION response too short"));
         }
+
         Ok(Identification {
             part_number: String::from_utf8_lossy(&data[0..7])
                 .trim_end_matches('\0')
@@ -277,6 +313,7 @@ impl CashcodeDevice {
         self.wait_for_ready(Duration::from_secs(30))?;
         self.get_bill_table()?;
         self.enable_bill_types(BillMask::ALL)?;
+
         Ok(())
     }
 
@@ -284,18 +321,25 @@ impl CashcodeDevice {
     /// `timeout` elapses.
     pub fn wait_for_ready(&mut self, timeout: Duration) -> Result<()> {
         let deadline = std::time::Instant::now() + timeout;
+
         loop {
             if std::time::Instant::now() >= deadline {
                 return Err(Error::Timeout);
             }
+
             let state = self.poll()?;
+
             debug!("wait_for_ready: state = {:?}", state);
+
             match state {
                 // These states mean the device is ready for the next command.
                 DeviceState::Idling | DeviceState::UnitDisabled => return Ok(()),
-                // Still booting — keep waiting.
-                DeviceState::Initializing
-                | DeviceState::PowerUp
+                // Still booting — send SET_SECURITY to advance initialisation.
+                DeviceState::Initializing => {
+                    debug!("device initializing — sending SET_SECURITY");
+                    let _ = self.set_security(SecurityLevel::Low);
+                }
+                DeviceState::PowerUp
                 | DeviceState::PowerUpBillInValidator
                 | DeviceState::PowerUpBillInStacker
                 | DeviceState::Busy => {}
@@ -304,6 +348,7 @@ impl CashcodeDevice {
                 }
                 _ => {}
             }
+
             std::thread::sleep(POLL_INTERVAL);
         }
     }

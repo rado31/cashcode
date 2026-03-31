@@ -11,16 +11,18 @@ pub const BILL_TABLE_RESPONSE_LEN: usize = BILL_TABLE_SIZE * ENTRY_BYTES;
 
 /// A single entry in the bill denomination table.
 ///
-/// Each bill type known to the validator is described by a face-value
-/// denomination and a three-character ISO-4217 currency code.
+/// Wire format per entry (5 bytes):
+/// ```text
+/// [value: u8][currency: [u8; 3]][scale: u8]
+/// ```
+/// Actual denomination = `value × 10^(scale >> 6)`.
 ///
-/// An all-zero entry (denomination = 0, country = `\0\0\0`) indicates an
-/// unused slot in the table.
+/// An all-zero entry (denomination = 0) indicates an unused slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BillEntry {
-    /// Face value of the bill (e.g., `5` for a 5 USD note).
-    pub denomination: u16,
-    /// ISO 4217 currency/country code as raw ASCII bytes (e.g., `b"USD"`).
+    /// Computed face value: `raw_value × 10^(scale_byte >> 6)`.
+    pub denomination: u32,
+    /// ISO 4217 currency/country code as raw ASCII bytes (e.g., `b"TKM"`).
     pub country_code: [u8; 3],
 }
 
@@ -36,10 +38,17 @@ impl BillEntry {
     }
 
     fn from_bytes(raw: &[u8; ENTRY_BYTES]) -> Self {
-        // Bytes 0–1: denomination (little-endian u16)
-        // Bytes 2–4: ISO country/currency code (ASCII)
-        let denomination = u16::from_le_bytes([raw[0], raw[1]]);
-        let country_code = [raw[2], raw[3], raw[4]];
+        // Byte  0  : denomination mantissa (face value digit, e.g. 1, 2, 5)
+        // Bytes 1–3: ISO currency code ASCII (e.g. "TKM", "USD")
+        // Byte  4  : scaling byte — bits 7:6 encode power-of-10 exponent
+        //            0x00 → ×1   (10^0)
+        //            0x40 → ×10  (10^1)
+        //            0x80 → ×100 (10^2)
+        let mantissa = raw[0] as u32;
+        // raw[4] is the decimal exponent directly: 0 → ×1, 1 → ×10, 2 → ×100 …
+        let denomination = mantissa * 10_u32.pow(raw[4] as u32);
+        let country_code = [raw[1], raw[2], raw[3]];
+
         Self {
             denomination,
             country_code,
@@ -50,10 +59,10 @@ impl BillEntry {
 impl std::fmt::Display for BillEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_empty() {
-            write!(f, "(empty)")
-        } else {
-            write!(f, "{} {}", self.denomination, self.country_str())
+            return write!(f, "(empty)");
         }
+
+        write!(f, "{} {}", self.denomination, self.country_str())
     }
 }
 
@@ -77,6 +86,7 @@ impl BillTable {
             denomination: 0,
             country_code: [0; 3],
         };
+
         let mut entries = std::array::from_fn(|_| empty.clone());
 
         for i in 0..BILL_TABLE_SIZE {
@@ -84,6 +94,7 @@ impl BillTable {
             let raw: &[u8; ENTRY_BYTES] = data[offset..offset + ENTRY_BYTES]
                 .try_into()
                 .expect("slice length is exact");
+
             entries[i] = BillEntry::from_bytes(raw);
         }
 
@@ -112,28 +123,42 @@ impl BillTable {
 mod tests {
     use super::*;
 
-    fn make_entry_bytes(denomination: u16, code: &[u8; 3]) -> [u8; 5] {
-        let d = denomination.to_le_bytes();
-        [d[0], d[1], code[0], code[1], code[2]]
+    // Format: [mantissa, currency[0], currency[1], currency[2], scale_byte]
+    fn make_entry_bytes(mantissa: u8, code: &[u8; 3], scale: u8) -> [u8; 5] {
+        [mantissa, code[0], code[1], code[2], scale]
     }
 
     #[test]
-    fn parse_single_entry() {
-        let raw = make_entry_bytes(5, b"USD");
+    fn parse_single_entry_no_scale() {
+        // 5 USD: mantissa=5, scale=0x00 → 5 × 10^0 = 5
+        let raw = make_entry_bytes(5, b"USD", 0x00);
         let entry = BillEntry::from_bytes(&raw);
+
         assert_eq!(entry.denomination, 5);
         assert_eq!(&entry.country_code, b"USD");
         assert_eq!(entry.country_str(), "USD");
     }
 
     #[test]
+    fn parse_single_entry_with_scale() {
+        // 10 TKM: mantissa=1, exp=1 → 1 × 10^1 = 10
+        let raw = make_entry_bytes(1, b"TKM", 0x01);
+        let entry = BillEntry::from_bytes(&raw);
+
+        assert_eq!(entry.denomination, 10);
+        assert_eq!(entry.country_str(), "TKM");
+    }
+
+    #[test]
     fn parse_full_table() {
         let mut data = vec![0u8; BILL_TABLE_RESPONSE_LEN];
-        // Put a $5 USD entry in slot 0
-        let entry = make_entry_bytes(5, b"USD");
+        // Put a 5 USD entry in slot 0
+        let entry = make_entry_bytes(5, b"USD", 0x00);
+
         data[..5].copy_from_slice(&entry);
 
         let table = BillTable::from_response_data(&data).unwrap();
+
         assert_eq!(table.get(0).unwrap().denomination, 5);
         assert!(table.get(1).unwrap().is_empty());
         assert_eq!(table.active_entries().count(), 1);
@@ -142,6 +167,7 @@ mod tests {
     #[test]
     fn short_response_is_error() {
         let data = vec![0u8; 10];
+
         assert!(matches!(
             BillTable::from_response_data(&data),
             Err(Error::InvalidFrame(_))

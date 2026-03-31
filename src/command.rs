@@ -33,7 +33,9 @@ impl BillMask {
     /// Enable a single bill type by its 0-based index (0–47).
     pub fn single(index: u8) -> Self {
         let mut mask = [0u8; 6];
+
         mask[(index / 8) as usize] |= 1 << (index % 8);
+
         Self(mask)
     }
 
@@ -113,7 +115,14 @@ impl Command {
         match self {
             Command::Reset => vec![codes::RESET],
             Command::GetStatus => vec![codes::GET_STATUS],
-            Command::SetSecurity(level) => vec![codes::SET_SECURITY, *level as u8],
+            Command::SetSecurity(level) => {
+                // CCNET SET_SECURITY takes a 3-byte per-bill-type bitmask.
+                let mask = match level {
+                    SecurityLevel::Low | SecurityLevel::Normal => 0x00u8,
+                    SecurityLevel::High | SecurityLevel::VeryHigh => 0xFFu8,
+                };
+                vec![codes::SET_SECURITY, mask, mask, mask]
+            }
             Command::Poll => vec![codes::POLL],
             Command::EnableBillTypes(mask) => {
                 let mut data = vec![codes::ENABLE_BILL_TYPES];
@@ -138,6 +147,7 @@ mod tests {
     #[test]
     fn bill_mask_single() {
         let mask = BillMask::single(0);
+
         assert!(mask.is_enabled(0));
         assert!(!mask.is_enabled(1));
         assert_eq!(mask.0[0], 0x01);
@@ -146,6 +156,7 @@ mod tests {
     #[test]
     fn bill_mask_all_enabled() {
         let mask = BillMask::ALL;
+
         for i in 0..48u8 {
             assert!(mask.is_enabled(i));
         }
@@ -154,6 +165,7 @@ mod tests {
     #[test]
     fn enable_bill_types_data_len() {
         let data = Command::EnableBillTypes(BillMask::ALL).to_data();
+
         assert_eq!(data.len(), 7); // 1 cmd byte + 6 mask bytes
         assert_eq!(data[0], 0x34);
     }

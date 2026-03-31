@@ -12,7 +12,7 @@ A Rust driver for **CashCode bill validators** using the [CCNET](https://en.wiki
 
 - Full CCNET command set: `RESET`, `POLL`, `ENABLE_BILL_TYPES`, `STACK`, `RETURN`, `HOLD`, `IDENTIFICATION`, `GET_BILL_TABLE`
 - Typed `DeviceState` enum covering all device states, bill events, rejection reasons, and hardware failures
-- CRC-CCITT validation on every frame (polynomial `0x1021`, init `0xFFFF`)
+- CRC-KERMIT validation on every frame (reflected poly `0x8408`, init `0x0000`)
 - `BillTable` parsing — denomination and ISO currency code for up to 24 bill types
 - `BillMask` type for fine-grained per-denomination enable/disable control
 - Synchronous API — no async runtime required; wrap in a thread when needed
@@ -114,17 +114,20 @@ println!("{} / {}", id.part_number, id.serial_number);
 
 ```
 PowerUp ──► Initializing ──► Idling ──► Accepting
-                                             │
-                                     EscrowPosition
-                                      ┌─────┴──────┐
-                                   Stack()      Return()
-                                      │              │
-                                  Stacking      Returning
-                                      │              │
-                               BillStacked     BillReturned
-                                      └─────┬──────┘
-                                          Idling
+                 │               ▲            │
+            SET_SECURITY         │      EscrowPosition
+                                 │       ┌────┴────┐
+                                 │    Stack()   Return()
+                                 │       │          │
+                                 │   Stacking   Returning
+                                 │       │          │
+                                 │  BillStacked  BillReturned
+                                 │       └────┬────┘
+                                 │       UnitDisabled
+                                 └──── enable_bill_types()
 ```
+
+After every bill stacked or returned the device disables itself (`UnitDisabled`). The host must call `enable_bill_types()` to return to `Idling`.
 
 Error states: `CassetteFull`, `CassetteOutOfPosition`, `ValidatorJammed`, `CassetteJammed`, `Cheated`, `Paused`, `Failure`.
 

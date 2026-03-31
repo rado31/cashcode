@@ -141,8 +141,9 @@ pub enum DeviceState {
     // ── Bill events ───────────────────────────────────────────────────────
     /// A bill has been validated and is now in the escrow position.
     ///
-    /// The host **must** respond with [`Command::Stack`] or [`Command::Return`]
-    /// (or [`Command::Hold`]) before the hold timer expires (~10 s).
+    /// The host **must** respond with [`crate::command::Command::Stack`] or
+    /// [`crate::command::Command::Return`] (or
+    /// [`crate::command::Command::Hold`]) before the hold timer expires (~10 s).
     EscrowPosition {
         /// 0-based index into the bill table.
         bill_type: u8,
@@ -194,17 +195,17 @@ impl DeviceState {
             0x46 => Ok(Self::Paused),
             0x47 => Ok(Self::Failure(FailureCode::from_byte(sub))),
 
-            // 0x80–0xBF: bill is in escrow (bits 5:0 = bill type index)
-            b @ 0x80..=0xBF => Ok(Self::EscrowPosition {
-                bill_type: b & 0x3F,
+            // Bill events use three fixed single-byte codes.
+            // The bill type is carried in byte[1] of the POLL response (1-based
+            // device numbering); we convert to 0-based for table indexing.
+            0x80 => Ok(Self::EscrowPosition {
+                bill_type: sub.saturating_sub(1),
             }),
-            // 0xC0–0xDF: bill successfully stacked (bits 4:0 = bill type index)
-            b @ 0xC0..=0xDF => Ok(Self::BillStacked {
-                bill_type: b & 0x1F,
+            0x81 => Ok(Self::BillStacked {
+                bill_type: sub.saturating_sub(1),
             }),
-            // 0xE0–0xFF: bill returned (bits 4:0 = bill type index)
-            b @ 0xE0..=0xFF => Ok(Self::BillReturned {
-                bill_type: b & 0x1F,
+            0x82 => Ok(Self::BillReturned {
+                bill_type: sub.saturating_sub(1),
             }),
 
             other => Err(Error::UnknownStatus(other)),
@@ -244,14 +245,16 @@ mod tests {
     #[test]
     fn parse_idling() {
         let state = DeviceState::from_poll_data(&[0x14]).unwrap();
+
         assert_eq!(state, DeviceState::Idling);
         assert!(state.is_ready());
     }
 
     #[test]
     fn parse_escrow_bill_type_5() {
-        // 0x80 | 5 = 0x85
-        let state = DeviceState::from_poll_data(&[0x85]).unwrap();
+        // device reports 1-based type 6 in byte[1] → 0-based type 5
+        let state = DeviceState::from_poll_data(&[0x80, 0x06]).unwrap();
+
         assert_eq!(state, DeviceState::EscrowPosition { bill_type: 5 });
         assert!(state.is_escrow());
     }
@@ -259,12 +262,14 @@ mod tests {
     #[test]
     fn parse_rejection_with_subreason() {
         let state = DeviceState::from_poll_data(&[0x1C, 0x60]).unwrap();
+
         assert_eq!(state, DeviceState::Rejecting(RejectReason::Insertion));
     }
 
     #[test]
     fn parse_failure_with_subcode() {
         let state = DeviceState::from_poll_data(&[0x47, 0x43]).unwrap();
+
         assert_eq!(
             state,
             DeviceState::Failure(FailureCode::TransportMotorFailure)
@@ -273,9 +278,10 @@ mod tests {
 
     #[test]
     fn parse_bill_stacked() {
-        // 0xC0 | 3 = 0xC3
-        let state = DeviceState::from_poll_data(&[0xC3]).unwrap();
-        assert_eq!(state, DeviceState::BillStacked { bill_type: 3 });
+        // device reports 1-based type 1 in byte[1] → 0-based type 0
+        let state = DeviceState::from_poll_data(&[0x81, 0x01]).unwrap();
+
+        assert_eq!(state, DeviceState::BillStacked { bill_type: 0 });
     }
 
     #[test]

@@ -43,15 +43,18 @@ impl Frame {
     pub fn encode(&self) -> Vec<u8> {
         // LNG = SYNC(1) + ADR(1) + LNG(1) + DATA(n) + CRC(2) = n + 5
         let lng = self.data.len() + 5;
+
         assert!(lng <= 255, "frame too large");
 
         let mut bytes = Vec::with_capacity(lng);
+
         bytes.push(SYNC);
         bytes.push(self.addr);
         bytes.push(lng as u8);
         bytes.extend_from_slice(&self.data);
 
         let crc = crc16(&bytes);
+
         bytes.push((crc & 0xFF) as u8); // LSB first
         bytes.push((crc >> 8) as u8);
 
@@ -65,14 +68,17 @@ impl Frame {
         if raw.len() < 6 {
             return Err(Error::InvalidFrame("frame shorter than minimum 6 bytes"));
         }
+
         if raw[0] != SYNC {
             return Err(Error::InvalidFrame("missing SYNC byte (0x02)"));
         }
 
         let lng = raw[2] as usize;
+
         if lng < 6 {
             return Err(Error::InvalidFrame("LNG field is below minimum (6)"));
         }
+
         if raw.len() < lng {
             return Err(Error::InvalidFrame(
                 "buffer shorter than LNG field indicates",
@@ -103,8 +109,10 @@ impl Frame {
 /// the two CRC bytes themselves). The result is transmitted LSB-first.
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0x0000;
+
     for &byte in data {
         crc ^= byte as u16;
+
         for _ in 0..8 {
             if crc & 1 != 0 {
                 crc = (crc >> 1) ^ 0x8408;
@@ -125,6 +133,7 @@ mod tests {
         let original = Frame::new(vec![0x33]); // POLL command
         let encoded = original.encode();
         let decoded = Frame::decode(&encoded).expect("decode failed");
+
         assert_eq!(decoded.addr, DEFAULT_ADDR);
         assert_eq!(decoded.data, vec![0x33]);
     }
@@ -134,6 +143,7 @@ mod tests {
         // POLL: 1 data byte → LNG = 1 + 5 = 6
         let frame = Frame::new(vec![0x33]);
         let encoded = frame.encode();
+
         assert_eq!(encoded[2], 6);
     }
 
@@ -141,7 +151,9 @@ mod tests {
     fn decode_rejects_bad_crc() {
         let mut encoded = Frame::new(vec![0x33]).encode();
         let last = encoded.len() - 1;
+
         encoded[last] ^= 0xFF; // corrupt the CRC high byte
+
         assert!(matches!(
             Frame::decode(&encoded),
             Err(Error::CrcMismatch { .. })
@@ -151,7 +163,9 @@ mod tests {
     #[test]
     fn decode_rejects_bad_sync() {
         let mut encoded = Frame::new(vec![0x33]).encode();
+
         encoded[0] = 0x00;
+
         assert!(matches!(
             Frame::decode(&encoded),
             Err(Error::InvalidFrame(_))
