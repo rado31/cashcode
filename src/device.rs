@@ -291,8 +291,14 @@ impl CashcodeDevice {
             let state = self.poll()?;
             debug!("wait_for_ready: state = {:?}", state);
             match state {
-                DeviceState::Idling => return Ok(()),
-                DeviceState::Initializing | DeviceState::PowerUp | DeviceState::Busy => {}
+                // These states mean the device is ready for the next command.
+                DeviceState::Idling | DeviceState::UnitDisabled => return Ok(()),
+                // Still booting — keep waiting.
+                DeviceState::Initializing
+                | DeviceState::PowerUp
+                | DeviceState::PowerUpBillInValidator
+                | DeviceState::PowerUpBillInStacker
+                | DeviceState::Busy => {}
                 other if other.is_error() => {
                     return Err(Error::NotReady(format!("{:?}", other)));
                 }
