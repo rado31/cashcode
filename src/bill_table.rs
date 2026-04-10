@@ -89,13 +89,13 @@ impl BillTable {
 
         let mut entries = std::array::from_fn(|_| empty.clone());
 
-        for i in 0..BILL_TABLE_SIZE {
+        for (i, entry) in entries.iter_mut().enumerate() {
             let offset = i * ENTRY_BYTES;
             let raw: &[u8; ENTRY_BYTES] = data[offset..offset + ENTRY_BYTES]
                 .try_into()
                 .expect("slice length is exact");
 
-            entries[i] = BillEntry::from_bytes(raw);
+            *entry = BillEntry::from_bytes(raw);
         }
 
         Ok(Self { entries })

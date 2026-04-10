@@ -196,17 +196,10 @@ impl DeviceState {
             0x47 => Ok(Self::Failure(FailureCode::from_byte(sub))),
 
             // Bill events use three fixed single-byte codes.
-            // The bill type is carried in byte[1] of the POLL response (1-based
-            // device numbering); we convert to 0-based for table indexing.
-            0x80 => Ok(Self::EscrowPosition {
-                bill_type: sub.saturating_sub(1),
-            }),
-            0x81 => Ok(Self::BillStacked {
-                bill_type: sub.saturating_sub(1),
-            }),
-            0x82 => Ok(Self::BillReturned {
-                bill_type: sub.saturating_sub(1),
-            }),
+            // The bill type is the raw 0-based index into the bill table.
+            0x80 => Ok(Self::EscrowPosition { bill_type: sub }),
+            0x81 => Ok(Self::BillStacked { bill_type: sub }),
+            0x82 => Ok(Self::BillReturned { bill_type: sub }),
 
             other => Err(Error::UnknownStatus(other)),
         }
@@ -252,8 +245,8 @@ mod tests {
 
     #[test]
     fn parse_escrow_bill_type_5() {
-        // device reports 1-based type 6 in byte[1] → 0-based type 5
-        let state = DeviceState::from_poll_data(&[0x80, 0x06]).unwrap();
+        // device sends raw 0-based index 5 in byte[1]
+        let state = DeviceState::from_poll_data(&[0x80, 0x05]).unwrap();
 
         assert_eq!(state, DeviceState::EscrowPosition { bill_type: 5 });
         assert!(state.is_escrow());
@@ -278,10 +271,10 @@ mod tests {
 
     #[test]
     fn parse_bill_stacked() {
-        // device reports 1-based type 1 in byte[1] → 0-based type 0
+        // device sends raw 0-based index 1 in byte[1]
         let state = DeviceState::from_poll_data(&[0x81, 0x01]).unwrap();
 
-        assert_eq!(state, DeviceState::BillStacked { bill_type: 0 });
+        assert_eq!(state, DeviceState::BillStacked { bill_type: 1 });
     }
 
     #[test]
