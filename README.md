@@ -107,7 +107,12 @@ dev.hold()?;        // extend hold timer (~10 s)
 
 // Device info
 let id = dev.identify()?;
-println!("{} / {}", id.part_number, id.serial_number);
+println!(
+    "{} (firmware {}) / {}",
+    id.part_number,
+    id.firmware_version.as_deref().unwrap_or("?"),
+    id.serial_number
+);
 ```
 
 ## Device states

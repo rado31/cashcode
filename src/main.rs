@@ -14,6 +14,15 @@ fn main() -> cashcode::Result<()> {
     dev.reset()?;
     dev.wait_for_ready(Duration::from_secs(30))?;
 
+    let id = dev.identify()?;
+
+    println!(
+        "Device: {} (firmware {}), serial {}",
+        id.part_number,
+        id.firmware_version.as_deref().unwrap_or("unknown"),
+        id.serial_number
+    );
+
     let table = dev.get_bill_table()?;
 
     println!("\nBill table:");

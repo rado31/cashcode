@@ -24,14 +24,55 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 pub const BUS_SILENCE: Duration = Duration::from_millis(20);
 
 /// Device identification returned by the `IDENTIFICATION` command.
+///
+/// Wire format (34 bytes):
+/// ```text
+/// [part number: 15 ASCII][serial number: 12 ASCII][asset number: 7]
+/// ```
 #[derive(Debug, Clone)]
 pub struct Identification {
-    /// 7-byte part number string.
+    /// 15-byte part number string (e.g. `SM-RU1353`).
     pub part_number: String,
+    /// Firmware version, taken from the trailing digits of the part number
+    /// (e.g. `1353` for `SM-RU1353`). `None` if the part number carries none.
+    pub firmware_version: Option<String>,
     /// 12-byte serial number string.
     pub serial_number: String,
     /// 7-byte asset number string.
     pub asset_number: String,
+}
+
+impl Identification {
+    /// Length of the `IDENTIFICATION` response payload.
+    pub const RESPONSE_LEN: usize = 34;
+
+    /// Parse an `IDENTIFICATION` response payload.
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        if data.len() < Self::RESPONSE_LEN {
+            return Err(Error::InvalidFrame("IDENTIFICATION response too short"));
+        }
+
+        let field = |bytes: &[u8]| {
+            String::from_utf8_lossy(bytes)
+                .trim_end_matches(['\0', ' '])
+                .to_string()
+        };
+
+        let part_number = field(&data[0..15]);
+        let digits = part_number.len()
+            - part_number
+                .trim_end_matches(|c: char| c.is_ascii_digit())
+                .len();
+        let firmware_version =
+            (digits > 0).then(|| part_number[part_number.len() - digits..].to_string());
+
+        Ok(Identification {
+            part_number,
+            firmware_version,
+            serial_number: field(&data[15..27]),
+            asset_number: field(&data[27..34]),
+        })
+    }
 }
 
 /// A handle to a CCNET bill validator connected over a serial port.
@@ -278,26 +319,12 @@ impl CashcodeDevice {
         Ok(self.bill_table.as_ref().unwrap())
     }
 
-    /// Query device identification (part number, serial number, asset number).
+    /// Query device identification (part number, firmware version, serial
+    /// number, asset number).
     pub fn identify(&mut self) -> Result<Identification> {
         let response = self.send(Command::Identification)?;
-        let data = &response.data;
 
-        if data.len() < 26 {
-            return Err(Error::InvalidFrame("IDENTIFICATION response too short"));
-        }
-
-        Ok(Identification {
-            part_number: String::from_utf8_lossy(&data[0..7])
-                .trim_end_matches('\0')
-                .to_string(),
-            serial_number: String::from_utf8_lossy(&data[7..19])
-                .trim_end_matches('\0')
-                .to_string(),
-            asset_number: String::from_utf8_lossy(&data[19..26])
-                .trim_end_matches('\0')
-                .to_string(),
-        })
+        Identification::parse(&response.data)
     }
 
     /// Perform the full device initialisation sequence:
@@ -351,5 +378,39 @@ impl CashcodeDevice {
 
             std::thread::sleep(POLL_INTERVAL);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(part: &str) -> Vec<u8> {
+        let mut data = vec![0u8; Identification::RESPONSE_LEN];
+        data[..part.len()].copy_from_slice(part.as_bytes());
+        data[15..27].copy_from_slice(b"41K123456789");
+        data[27..34].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+        data
+    }
+
+    #[test]
+    fn parse_identification_with_firmware() {
+        let id = Identification::parse(&payload("SM-RU1353      ")).unwrap();
+
+        assert_eq!(id.part_number, "SM-RU1353");
+        assert_eq!(id.firmware_version.as_deref(), Some("1353"));
+        assert_eq!(id.serial_number, "41K123456789");
+    }
+
+    #[test]
+    fn parse_identification_without_firmware_digits() {
+        let id = Identification::parse(&payload("SM-XX")).unwrap();
+
+        assert_eq!(id.firmware_version, None);
+    }
+
+    #[test]
+    fn parse_identification_too_short() {
+        assert!(Identification::parse(&[0u8; 26]).is_err());
     }
 }
