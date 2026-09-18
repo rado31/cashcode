@@ -22,7 +22,7 @@ A Rust driver for **CashCode bill validators** using the [CCNET](https://en.wiki
 
 ```toml
 [dependencies]
-cashcode = "0.1"
+cashcode = "0.1.2"
 ```
 
 ## Quick start
